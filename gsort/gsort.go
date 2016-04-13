@@ -150,9 +150,6 @@ func Sort(inpath string, outpath string, preprocess Processor, memMB int) error 
 			// decorating and sorting is done in parallel.
 			go sortAndWrite(f, wg, chunk, preprocess)
 		}
-		if rerr == io.EOF {
-			break
-		}
 	}
 	wg.Wait()
 	// currently merging is serial. Should parallelize.
