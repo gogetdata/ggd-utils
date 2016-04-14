@@ -61,7 +61,7 @@ func (l *Lines) Pop() interface{} {
 	return v
 }
 
-type Processor func(line []byte) LineDeco
+type Processor func(line []byte) []int
 
 func Sort(rdr io.Reader, wtr io.Writer, preprocess Processor, memMB int) error {
 
@@ -157,8 +157,7 @@ func readLines(rdr *bufio.Reader, memMb int, process Processor) ([]LineDeco, err
 				return processed[:j], io.EOF
 			}
 		}
-		processed[j] = process(line)
-		processed[j].line = line
+		processed[j] = LineDeco{line: line, Cols: process(line)}
 
 		j += 1
 		if err == io.EOF {
@@ -229,9 +228,7 @@ func merge(fileNames []string, wtr io.Writer, process Processor) error {
 
 		line, err := fhs[i].ReadBytes('\n')
 		if len(line) > 0 {
-			cache[i] = process(line)
-			cache[i].line = line
-			cache[i].i = i
+			cache[i] = LineDeco{line: line, Cols: process(line), i: i}
 		} else if err == io.EOF {
 			continue
 		} else if err != nil {
@@ -254,9 +251,7 @@ func merge(fileNames []string, wtr io.Writer, process Processor) error {
 			return err
 		}
 		if len(line) != 0 {
-			next := process(line)
-			next.line = line
-			next.i = c.i
+			next := &LineDeco{line: line, Cols: process(line), i: c.i}
 			heap.Push(&cache, next)
 		} else {
 			os.Remove(fileNames[c.i])

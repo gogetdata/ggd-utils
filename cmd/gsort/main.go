@@ -39,7 +39,7 @@ func unsafeString(b []byte) string {
 }
 
 // the last function is used when a column is -1
-func sortFnFromCols(cols []int, gf *ggd_utils.GenomeFile, getter *func(int, [][]byte) int) func([]byte) gsort.LineDeco {
+func sortFnFromCols(cols []int, gf *ggd_utils.GenomeFile, getter *func(int, [][]byte) int) func([]byte) []int {
 	m := 0
 	for _, c := range cols {
 		if c > m {
@@ -50,8 +50,8 @@ func sortFnFromCols(cols []int, gf *ggd_utils.GenomeFile, getter *func(int, [][]
 	if getter != nil && m < 6 {
 		m = 6
 	}
-	fn := func(line []byte) gsort.LineDeco {
-		l := gsort.LineDeco{Cols: make([]int, len(cols))}
+	fn := func(line []byte) []int {
+		l := make([]int, len(cols))
 		// handle chromosome column
 		toks := bytes.SplitN(line, []byte{'\t'}, m)
 		// TODO: only do this when needed.
@@ -62,14 +62,14 @@ func sortFnFromCols(cols []int, gf *ggd_utils.GenomeFile, getter *func(int, [][]
 		}
 		var ok bool
 		// TODO: use unsafe string
-		l.Cols[0], ok = gf.Order[string(toks[cols[0]])]
+		l[0], ok = gf.Order[string(toks[cols[0]])]
 		if !ok {
 			log.Fatalf("unknown chromosome: %s", toks[cols[0]])
 		}
 		for k, col := range cols[1:] {
 			i := k + 1
 			if col == -1 {
-				l.Cols[i] = (*getter)(l.Cols[i-1], toks)
+				l[i] = (*getter)(l[i-1], toks)
 			} else {
 				if col == len(toks)-1 {
 					toks[col] = bytes.TrimRight(toks[col], "\r\n")
@@ -78,7 +78,7 @@ func sortFnFromCols(cols []int, gf *ggd_utils.GenomeFile, getter *func(int, [][]
 				if err != nil {
 					log.Fatal(err)
 				}
-				l.Cols[i] = v
+				l[i] = v
 			}
 		}
 		return l

@@ -26,19 +26,19 @@ b	2
 a	3
 `)
 
-	pp := func(line []byte) gsort.LineDeco {
-		l := gsort.LineDeco{Cols: make([]int, 2)}
+	pp := func(line []byte) []int {
+		l := make([]int, 2)
 		toks := bytes.Split(line, []byte{'\t'})
-		l.Cols[0] = int(toks[0][0])
+		l[0] = int(toks[0][0])
 		if len(toks) > 1 {
 			v, err := strconv.Atoi(string(toks[1]))
 			if err != nil {
-				l.Cols[1] = -1
+				l[1] = -1
 			} else {
-				l.Cols[1] = v
+				l[1] = v
 			}
 		} else {
-			l.Cols[1] = -1
+			l[1] = -1
 		}
 		return l
 
@@ -65,20 +65,20 @@ a	3
 g	1
 `)
 
-	pp := func(line []byte) gsort.LineDeco {
-		l := gsort.LineDeco{Cols: make([]int, 2)}
+	pp := func(line []byte) []int {
+		l := make([]int, 2)
 		toks := bytes.Split(line, []byte{'\t'})
-		l.Cols[1] = -int(toks[0][0])
+		l[1] = -int(toks[0][0])
 		if len(toks) > 1 {
 			toks[1] = bytes.TrimSuffix(toks[1], []byte{'\n'})
 			v, err := strconv.Atoi(string(toks[1]))
 			if err != nil {
-				l.Cols[0] = -1
+				l[0] = -1
 			} else {
-				l.Cols[0] = v
+				l[0] = v
 			}
 		} else {
-			l.Cols[0] = math.MinInt32
+			l[0] = math.MinInt32
 		}
 		return l
 
@@ -96,22 +96,22 @@ a	3
 `)
 
 	// sort numbers in reverse
-	rev := func(line []byte) gsort.LineDeco {
-		l := gsort.LineDeco{Cols: make([]int, 2)}
+	rev := func(line []byte) []int {
+		l := make([]int, 2)
 		toks := bytes.Split(line, []byte{'\t'})
-		l.Cols[1] = -int(toks[0][0])
+		l[1] = -int(toks[0][0])
 		if len(toks) > 1 {
 			toks[1] = bytes.TrimSuffix(toks[1], []byte{'\n'})
 			v, err := strconv.Atoi(string(toks[1]))
 			if err != nil {
 				log.Println(err)
-				l.Cols[0] = 1
+				l[0] = 1
 			} else {
 				// NOTE added negative here
-				l.Cols[0] = -v
+				l[0] = -v
 			}
 		} else {
-			l.Cols[0] = math.MaxInt32
+			l[0] = math.MaxInt32
 		}
 		return l
 
