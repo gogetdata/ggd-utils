@@ -53,13 +53,49 @@ func (l Lines) Pop() interface{} {
 	if n == 0 {
 		return nil
 	}
-
-	v := l[n-1]
-	l = l[:n-1]
+	v, l := l[n-1], l[:n-1]
 	return v
 }
 
 type Processor func(line []byte) LineDeco
+
+func Sort(rdr io.Reader, wtr io.Writer, preprocess Processor, memMB int) error {
+
+	bwtr, brdr := bufio.NewWriter(wtr), bufio.NewReader(rdr)
+
+	err := writeHeader(bwtr, brdr)
+	if err != nil {
+		return err
+	}
+	// ch make sure we don't have too many processes running
+	ch := make(chan bool, runtime.GOMAXPROCS(-1))
+	// wg makes sure we wait until all is done
+	wg := &sync.WaitGroup{}
+	var rerr error
+	fileNames := make([]string, 0)
+	for rerr == nil {
+		var chunk [][]byte
+		chunk, rerr = readLines(brdr, memMB)
+		if len(chunk) != 0 {
+			f, err := ioutil.TempFile("", fmt.Sprintf("gsort.%d", len(fileNames)))
+			if err != nil {
+				log.Fatal(err)
+			}
+			fileNames = append(fileNames, f.Name())
+			defer os.Remove(f.Name())
+			ch <- true
+			wg.Add(1)
+			// decorating and sorting is done in parallel.
+			go sortAndWrite(f, wg, chunk, preprocess)
+		}
+	}
+	wg.Wait()
+	if len(fileNames) == 1 {
+		return writeOne(fileNames[0], bwtr)
+	}
+	// currently merging is serial. Should parallelize.
+	return merge(fileNames, bwtr, preprocess)
+}
 
 func readLines(rdr *bufio.Reader, memMb int) ([][]byte, error) {
 
@@ -94,7 +130,7 @@ func readLines(rdr *bufio.Reader, memMb int) ([][]byte, error) {
 	return processed, nil
 }
 
-func writeHeader(wtr *xopen.Writer, rdr *xopen.Reader) error {
+func writeHeader(wtr *bufio.Writer, rdr *bufio.Reader) error {
 	for {
 		b, err := rdr.Peek(1)
 		if err != nil {
@@ -112,48 +148,15 @@ func writeHeader(wtr *xopen.Writer, rdr *xopen.Reader) error {
 	return nil
 }
 
-// TODO: should take io.Reader, and io.Writer for in and out.
-func Sort(inpath string, outpath string, preprocess Processor, memMB int) error {
-
-	rdr, err := xopen.Ropen(inpath)
+// fast path where we don't use merge if it all fit in memory.
+func writeOne(fname string, wtr *bufio.Writer) error {
+	rdr, err := xopen.Ropen(fname)
 	if err != nil {
 		return err
 	}
 	defer rdr.Close()
-	wtr, err := xopen.Wopen(outpath)
-	if err != nil {
-		return err
-	}
-	defer wtr.Close()
-	err = writeHeader(wtr, rdr)
-	if err != nil {
-		return err
-	}
-	// ch make sure we don't have too many processes running
-	ch := make(chan bool, runtime.GOMAXPROCS(-1))
-	// wg makes sure we wait until all is done
-	wg := &sync.WaitGroup{}
-	var rerr error
-	fileNames := make([]string, 0)
-	for rerr == nil {
-		var chunk [][]byte
-		chunk, rerr = readLines(rdr.Reader, memMB)
-		if len(chunk) != 0 {
-			f, err := ioutil.TempFile("", fmt.Sprintf("gsort.%d", len(fileNames)))
-			if err != nil {
-				log.Fatal(err)
-			}
-			fileNames = append(fileNames, f.Name())
-			defer os.Remove(f.Name())
-			ch <- true
-			wg.Add(1)
-			// decorating and sorting is done in parallel.
-			go sortAndWrite(f, wg, chunk, preprocess)
-		}
-	}
-	wg.Wait()
-	// currently merging is serial. Should parallelize.
-	return merge(fileNames, wtr.Writer, preprocess)
+	_, err = io.Copy(wtr, rdr)
+	return err
 }
 
 func merge(fileNames []string, wtr *bufio.Writer, process Processor) error {
