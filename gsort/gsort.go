@@ -12,8 +12,6 @@ import (
 	"runtime"
 	"sort"
 	"sync"
-
-	"github.com/brentp/xopen"
 )
 
 type LineDeco struct {
@@ -61,7 +59,7 @@ type Processor func(line []byte) LineDeco
 
 func Sort(rdr io.Reader, wtr io.Writer, preprocess Processor, memMB int) error {
 
-	bwtr, brdr := bufio.NewWriter(wtr), bufio.NewReader(rdr)
+	brdr, bwtr := bufio.NewReader(rdr), bufio.NewWriter(wtr)
 
 	err := writeHeader(bwtr, brdr)
 	if err != nil {
@@ -77,7 +75,7 @@ func Sort(rdr io.Reader, wtr io.Writer, preprocess Processor, memMB int) error {
 		var chunk [][]byte
 		chunk, rerr = readLines(brdr, memMB)
 		if len(chunk) != 0 {
-			f, err := ioutil.TempFile("", fmt.Sprintf("gsort.%d", len(fileNames)))
+			f, err := ioutil.TempFile("", fmt.Sprintf("gsort.%d.", len(fileNames)))
 			if err != nil {
 				log.Fatal(err)
 			}
@@ -149,13 +147,17 @@ func writeHeader(wtr *bufio.Writer, rdr *bufio.Reader) error {
 }
 
 // fast path where we don't use merge if it all fit in memory.
-func writeOne(fname string, wtr *bufio.Writer) error {
-	rdr, err := xopen.Ropen(fname)
+func writeOne(fname string, wtr io.Writer) error {
+	rdr, err := os.Open(fname)
 	if err != nil {
 		return err
 	}
 	defer rdr.Close()
-	_, err = io.Copy(wtr, rdr)
+	gz, err := gzip.NewReader(rdr)
+	if err != nil {
+		return err
+	}
+	_, err = io.Copy(wtr, gz)
 	return err
 }
 
@@ -214,9 +216,16 @@ func merge(fileNames []string, wtr *bufio.Writer, process Processor) error {
 }
 
 func sortAndWrite(f *os.File, wg *sync.WaitGroup, chunk [][]byte, process Processor) {
+	if len(chunk) == 0 {
+		return
+	}
+	last := chunk[len(chunk)-1]
+	if len(last) == 0 || last[len(last)-1] != '\n' {
+		chunk[len(chunk)-1] = append(last, '\n')
+	}
 	defer wg.Done()
-	defer f.Close()
 	gz := gzip.NewWriter(f)
+	defer f.Close()
 	defer gz.Close()
 	dchunk := make(Lines, len(chunk))
 	for i, l := range chunk {
@@ -229,4 +238,5 @@ func sortAndWrite(f *os.File, wg *sync.WaitGroup, chunk [][]byte, process Proces
 	for _, dl := range dchunk {
 		wtr.Write(dl.line)
 	}
+	wtr.Flush()
 }
