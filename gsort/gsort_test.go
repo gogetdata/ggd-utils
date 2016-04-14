@@ -122,8 +122,7 @@ a	3
 	data = strings.NewReader(`a	1
 b	2
 a	3
-g	1
-`)
+g	1`)
 
 	err = gsort.Sort(data, wtr, rev, 22)
 	c.Assert(err, IsNil)

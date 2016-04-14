@@ -121,6 +121,10 @@ func readLines(rdr *bufio.Reader, memMb int, process Processor) ([]LineDeco, err
 			lines = append(lines, line)
 		}
 		if err == io.EOF {
+			last := lines[len(lines)-1]
+			if last[len(last)-1] != '\n' {
+				lines[len(lines)-1] = append(last, '\n')
+			}
 			break
 		}
 	}
@@ -146,9 +150,9 @@ func readLines(rdr *bufio.Reader, memMb int, process Processor) ([]LineDeco, err
 		}
 		if len(line) == 0 {
 			if err == io.EOF {
-				last := processed[len(processed)-1]
-				if len(last.line) == 0 || last.line[len(last.line)-1] != '\n' {
-					processed[len(processed)-1].line = append(last.line, '\n')
+				last := processed[j].line
+				if len(last) == 0 || last[len(last)-1] != '\n' {
+					processed[j].line = append(last, '\n')
 				}
 				return processed[:j], io.EOF
 			}
@@ -158,6 +162,10 @@ func readLines(rdr *bufio.Reader, memMb int, process Processor) ([]LineDeco, err
 
 		j += 1
 		if err == io.EOF {
+			last := processed[j].line
+			if len(last) == 0 || last[len(last)-1] != '\n' {
+				processed[j].line = append(last, '\n')
+			}
 			return processed[:j], io.EOF
 		}
 		if j == len(processed) {
