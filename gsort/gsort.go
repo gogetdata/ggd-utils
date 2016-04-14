@@ -12,12 +12,13 @@ import (
 	"runtime"
 	"sort"
 	"sync"
+	"time"
 )
 
 type LineDeco struct {
+	i    int // used internally to indicate which file it came from.
 	line []byte
 	Cols []int
-	i    int // used internally to indicate which file it came from.
 }
 
 type Lines []LineDeco
@@ -44,8 +45,8 @@ func (l Lines) Swap(i, j int) {
 
 // for Heap
 
-func (l Lines) Push(i interface{}) {
-	l = append(l, i.(LineDeco))
+func (l *Lines) Push(i interface{}) {
+	*l = append(*l, i.(LineDeco))
 }
 
 func (l *Lines) Pop() interface{} {
@@ -88,7 +89,7 @@ func Sort(rdr io.Reader, wtr io.Writer, preprocess Processor, memMB int) error {
 			ch <- true
 			wg.Add(1)
 			// decorating and sorting is done in parallel.
-			go sortAndWrite(f, wg, chunk, preprocess)
+			go sortAndWrite(f, wg, chunk, preprocess, ch)
 		}
 	}
 	wg.Wait()
@@ -101,27 +102,50 @@ func Sort(rdr io.Reader, wtr io.Writer, preprocess Processor, memMB int) error {
 
 func readLines(rdr *bufio.Reader, memMb int) ([][]byte, error) {
 
-	var processed [][]byte
-	j := 0
+	start := time.Now()
 
-	for {
+	N := 2000
+	lens, j := make([]int, 0, N), 0
 
+	// sample XX lines to get the average length.
+	lines := make([][]byte, 0, N)
+	for len(lines) < cap(lines) {
 		line, err := rdr.ReadBytes('\n')
 		if err != nil && err != io.EOF {
 			return nil, err
+		}
+		if len(line) != 0 {
+			lens = append(lens, len(line))
+			lines = append(lines, line)
+		}
+		if err == io.EOF {
+			break
+		}
+	}
+	sort.Ints(lens)
+
+	n := 1000000 * memMb / lens[int(0.95*float64(len(lens)))] / runtime.GOMAXPROCS(-1)
+	if n < 1 {
+		n = 1
+	}
+	processed := make([][]byte, n)
+	var line []byte
+	var err error
+
+	for {
+
+		if j < len(lines) {
+			line = lines[j]
+		} else {
+			line, err = rdr.ReadBytes('\n')
+			if err != nil && err != io.EOF {
+				return nil, err
+			}
 		}
 		if len(line) == 0 {
 			if err == io.EOF {
 				return processed[:j], io.EOF
 			}
-		}
-		if j == 0 {
-			n := 1000000 * memMb / (len(line) - 1)
-			//n = 1
-			if n < 1 {
-				n = 1
-			}
-			processed = make([][]byte, n)
 		}
 		processed[j] = line
 
@@ -133,6 +157,7 @@ func readLines(rdr *bufio.Reader, memMb int) ([][]byte, error) {
 			break
 		}
 	}
+	log.Printf("time to read: %d records: %.3f", len(processed), time.Since(start).Seconds())
 	return processed, nil
 }
 
@@ -203,6 +228,7 @@ func merge(fileNames []string, wtr io.Writer, process Processor) error {
 
 	for {
 		o := heap.Pop(&cache)
+
 		if o == nil {
 			break
 		}
@@ -217,6 +243,8 @@ func merge(fileNames []string, wtr io.Writer, process Processor) error {
 			next.line = line
 			next.i = c.i
 			heap.Push(&cache, next)
+		} else {
+			log.Println(fileNames[c.i], string(line))
 		}
 		wtr.Write(c.line)
 
@@ -224,7 +252,7 @@ func merge(fileNames []string, wtr io.Writer, process Processor) error {
 	return nil
 }
 
-func sortAndWrite(f *os.File, wg *sync.WaitGroup, chunk [][]byte, process Processor) {
+func sortAndWrite(f *os.File, wg *sync.WaitGroup, chunk [][]byte, process Processor, ch chan bool) {
 	if len(chunk) == 0 {
 		return
 	}
@@ -237,15 +265,24 @@ func sortAndWrite(f *os.File, wg *sync.WaitGroup, chunk [][]byte, process Proces
 	defer f.Close()
 	defer gz.Close()
 	dchunk := make(Lines, len(chunk))
+	start := time.Now()
+
 	for i, l := range chunk {
 		dchunk[i] = process(l)
 		dchunk[i].line = l
 	}
 
+	procTime := time.Since(start).Seconds()
+	start = time.Now()
+
 	sort.Sort(dchunk)
+	sortTime := time.Since(start).Seconds()
+	log.Printf("time to process: %.3f, time to sort: %.3f", procTime, sortTime)
 	wtr := bufio.NewWriter(gz)
 	for _, dl := range dchunk {
 		wtr.Write(dl.line)
 	}
 	wtr.Flush()
+	<-ch
+	log.Println("wrote:", f.Name())
 }
