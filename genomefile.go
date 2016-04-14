@@ -12,13 +12,13 @@ import (
 
 type GenomeFile struct {
 	Lengths map[string]int
-	order   map[string]int
+	Order   map[string]int
 	path    string
 }
 
 // Less checks if one chromosome occurs before the other.
 func (g *GenomeFile) Less(a, b string) bool {
-	return g.order[a] <= g.order[b]
+	return g.Order[a] <= g.Order[b]
 }
 
 func ReadGenomeFile(path string) (*GenomeFile, error) {
@@ -27,7 +27,7 @@ func ReadGenomeFile(path string) (*GenomeFile, error) {
 	if err != nil {
 		return nil, err
 	}
-	gf := &GenomeFile{path: path, Lengths: make(map[string]int, 50), order: make(map[string]int, 50)}
+	gf := &GenomeFile{path: path, Lengths: make(map[string]int, 50), Order: make(map[string]int, 50)}
 	defer rdr.Close()
 
 	space := regexp.MustCompile("\\s+")
@@ -57,7 +57,7 @@ func ReadGenomeFile(path string) (*GenomeFile, error) {
 			return nil, err
 		}
 		gf.Lengths[chrom] = length
-		gf.order[chrom] = len(gf.order)
+		gf.Order[chrom] = len(gf.Order)
 
 	}
 	return gf, nil

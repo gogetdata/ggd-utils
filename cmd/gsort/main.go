@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
 	"strconv"
 	"strings"
+	"unsafe"
 
 	"github.com/alexflint/go-arg"
 	"github.com/brentp/ggd-utils"
@@ -32,7 +34,12 @@ var args struct {
 	Memory int    `arg:"-m,help:megabytes of memory to use before writing to temp files."`
 }
 
-func sortFnFromCols(cols []int, gf *ggd_utils.GenomeFile) func([]byte) gsort.LineDeco {
+func unsafeString(b []byte) string {
+	return *(*string)(unsafe.Pointer(&b))
+}
+
+// the last function is used when a column is -1
+func sortFnFromCols(cols []int, gf *ggd_utils.GenomeFile, getter *func(int, [][]byte) int) func([]byte) gsort.LineDeco {
 	m := 0
 	for _, c := range cols {
 		if c > m {
@@ -40,17 +47,40 @@ func sortFnFromCols(cols []int, gf *ggd_utils.GenomeFile) func([]byte) gsort.Lin
 		}
 	}
 	m += 2
+	if getter != nil && m < 6 {
+		m = 6
+	}
 	fn := func(line []byte) gsort.LineDeco {
 		l := gsort.LineDeco{Cols: make([]int, len(cols))}
 		// handle chromosome column
 		toks := bytes.SplitN(line, []byte{'\t'}, m)
+		// TODO: only do this when needed.
+		// avoids problems with Atoi('222\n')
+		end := toks[len(toks)-1]
+		for end[len(end)-1] == '\n' || end[len(end)-1] == '\r' {
+			end = end[:len(end)-1]
+		}
 		var ok bool
 		// TODO: use unsafe string
-		l.Cols[0], ok = gf.Order[toks[cols[0]]]
+		l.Cols[0], ok = gf.Order[string(toks[cols[0]])]
 		if !ok {
 			log.Fatalf("unknown chromosome: %s", toks[cols[0]])
 		}
-
+		for k, col := range cols[1:] {
+			i := k + 1
+			if col == -1 {
+				l.Cols[i] = (*getter)(l.Cols[i-1], toks)
+			} else {
+				if col == len(toks)-1 {
+					v, err := strconv.Atoi(unsafeString(toks[col]))
+					if err != nil {
+						log.Fatal(err)
+					}
+					l.Cols[i] = v
+				}
+			}
+		}
+		return l
 	}
 	return fn
 }
@@ -117,6 +147,77 @@ func sniff(rdr *bufio.Reader) (string, *bufio.Reader, error) {
 	return ftype, bufio.NewReader(nrdr), nil
 }
 
+func find(key []byte, info []byte) (int, int) {
+	l := len(key)
+	if pos := bytes.Index(info, key); pos != -1 {
+		var end int
+		for end = pos + l + 1; end < len(info); end++ {
+			if info[end] == ';' {
+				break
+			}
+		}
+		return pos + l, end
+	}
+	return -1, -1
+
+}
+
+func getMax(i []byte) (int, error) {
+	if !bytes.Contains(i, []byte(",")) {
+		return strconv.Atoi(unsafeString(i))
+	}
+	all := bytes.Split(i, []byte{','})
+	max := -1
+	for _, b := range all {
+		v, err := strconv.Atoi(unsafeString(b))
+		if err != nil {
+			return max, err
+		}
+		if v > max {
+			max = v
+		}
+	}
+	return max, nil
+}
+
+var vcfEndGetter func(int, [][]byte) int = func(start int, toks [][]byte) int {
+	if bytes.Contains(toks[4], []byte{'<'}) && (bytes.Contains(toks[4], []byte("<DEL")) ||
+		bytes.Contains(toks[4], []byte("<DUP")) ||
+		bytes.Contains(toks[4], []byte("<INV")) ||
+		bytes.Contains(toks[4], []byte("<CN"))) {
+		// need to look at INFO for this.
+		var info []byte
+		if len(toks) < 8 {
+			// just grab everything since we look for end= anyway
+			info = toks[len(toks)-1]
+		} else {
+			info = toks[7]
+		}
+		if s, e := find([]byte("END="), info); s != -1 {
+			end, err := getMax(info[s:e])
+			if err != nil {
+				log.Fatal(err)
+			}
+			return end
+		}
+		s, e := find([]byte("SVLEN="), info)
+		if s == -1 {
+			log.Println("warning: cant find end for %s", string(info))
+			return start + len(toks[3])
+		}
+		svlen, err := getMax(info[s:e])
+		if err != nil {
+			log.Fatal(err)
+		}
+		return start + svlen
+
+	} else {
+		// length of reference.
+		return start + len(toks[3])
+	}
+
+}
+
 func main() {
 
 	args.Memory = DEFAULT_MEM
@@ -132,10 +233,24 @@ func main() {
 	defer rdr.Close()
 
 	ftype, brdr, err := sniff(rdr.Reader)
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	gf, err := ggd_utils.ReadGenomeFile(args.Genome)
 	if err != nil {
 		log.Fatal(err)
 	}
 
+	getter := &vcfEndGetter
+	if ftype != "VCF" {
+		getter = nil
+	}
+
+	sortFn := sortFnFromCols(FileCols[ftype], gf, getter)
+	wtr := bufio.NewWriter(os.Stdout)
+
+	if err := gsort.Sort(brdr, wtr, sortFn, args.Memory); err != nil {
+		log.Fatal(err)
+	}
 }
