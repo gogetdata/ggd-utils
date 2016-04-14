@@ -23,7 +23,8 @@ func (s *GSortTest) TestSort1(c *C) {
 
 	data := strings.NewReader(`a	1
 b	2
-a	3`)
+a	3
+`)
 
 	pp := func(line []byte) gsort.LineDeco {
 		l := gsort.LineDeco{Cols: make([]int, 2)}
@@ -61,7 +62,8 @@ func (s *GSortTest) TestSort2(c *C) {
 	data := strings.NewReader(`a	1
 b	2
 a	3
-g	1`)
+g	1
+`)
 
 	pp := func(line []byte) gsort.LineDeco {
 		l := gsort.LineDeco{Cols: make([]int, 2)}
@@ -120,7 +122,8 @@ a	3
 	data = strings.NewReader(`a	1
 b	2
 a	3
-g	1`)
+g	1
+`)
 
 	err = gsort.Sort(data, wtr, rev, 22)
 	c.Assert(err, IsNil)
