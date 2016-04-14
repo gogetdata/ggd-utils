@@ -37,7 +37,9 @@ func (l Lines) Less(i, j int) bool {
 	return false
 }
 func (l Lines) Swap(i, j int) {
-	l[j], l[i] = l[i], l[j]
+	if i < len(l) {
+		l[j], l[i] = l[i], l[j]
+	}
 }
 
 // for Heap
@@ -46,12 +48,13 @@ func (l Lines) Push(i interface{}) {
 	l = append(l, i.(LineDeco))
 }
 
-func (l Lines) Pop() interface{} {
-	n := len(l)
+func (l *Lines) Pop() interface{} {
+	n := len(*l)
 	if n == 0 {
 		return nil
 	}
-	v, l := l[n-1], l[:n-1]
+	v := (*l)[n-1]
+	*l = (*l)[:n-1]
 	return v
 }
 
@@ -60,6 +63,7 @@ type Processor func(line []byte) LineDeco
 func Sort(rdr io.Reader, wtr io.Writer, preprocess Processor, memMB int) error {
 
 	brdr, bwtr := bufio.NewReader(rdr), bufio.NewWriter(wtr)
+	defer bwtr.Flush()
 
 	err := writeHeader(bwtr, brdr)
 	if err != nil {
@@ -113,6 +117,10 @@ func readLines(rdr *bufio.Reader, memMb int) ([][]byte, error) {
 		}
 		if j == 0 {
 			n := 1000000 * memMb / (len(line) - 1)
+			//n = 1
+			if n < 1 {
+				n = 1
+			}
 			processed = make([][]byte, n)
 		}
 		processed[j] = line
@@ -161,13 +169,12 @@ func writeOne(fname string, wtr io.Writer) error {
 	return err
 }
 
-func merge(fileNames []string, wtr *bufio.Writer, process Processor) error {
+func merge(fileNames []string, wtr io.Writer, process Processor) error {
 	fhs := make([]*bufio.Reader, len(fileNames))
 
 	cache := make(Lines, len(fileNames))
 
 	for i, fn := range fileNames {
-		defer os.Remove(fn)
 		fh, err := os.Open(fn)
 		if err != nil {
 			return err
@@ -192,10 +199,10 @@ func merge(fileNames []string, wtr *bufio.Writer, process Processor) error {
 		}
 	}
 
-	heap.Init(cache)
+	heap.Init(&cache)
 
 	for {
-		o := heap.Pop(cache)
+		o := heap.Pop(&cache)
 		if o == nil {
 			break
 		}
@@ -205,10 +212,12 @@ func merge(fileNames []string, wtr *bufio.Writer, process Processor) error {
 		if err != io.EOF && err != nil {
 			return err
 		}
-		next := process(line)
-		next.line = line
-		next.i = c.i
-		heap.Push(cache, next)
+		if len(line) != 0 {
+			next := process(line)
+			next.line = line
+			next.i = c.i
+			heap.Push(&cache, next)
+		}
 		wtr.Write(c.line)
 
 	}
