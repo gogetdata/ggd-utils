@@ -2,7 +2,9 @@ package gsort
 
 import (
 	"bufio"
-	"compress/gzip"
+
+	gzip "github.com/klauspost/pgzip"
+
 	"container/heap"
 	"fmt"
 	"io"
@@ -23,23 +25,23 @@ type LineDeco struct {
 
 type Lines []LineDeco
 
-func (l Lines) Len() int {
-	return len(l)
+func (l *Lines) Len() int {
+	return len(*l)
 }
 
-func (l Lines) Less(i, j int) bool {
+func (l *Lines) Less(i, j int) bool {
 
-	for k := 0; k < len(l[i].Cols); k++ {
-		if l[j].Cols[k] == l[i].Cols[k] {
+	for k := 0; k < len((*l)[i].Cols); k++ {
+		if (*l)[j].Cols[k] == (*l)[i].Cols[k] {
 			continue
 		}
-		return l[i].Cols[k] < l[j].Cols[k]
+		return (*l)[i].Cols[k] < (*l)[j].Cols[k]
 	}
 	return false
 }
-func (l Lines) Swap(i, j int) {
-	if i < len(l) {
-		l[j], l[i] = l[i], l[j]
+func (l *Lines) Swap(i, j int) {
+	if i < len(*l) {
+		(*l)[j], (*l)[i] = (*l)[i], (*l)[j]
 	}
 }
 
@@ -77,8 +79,8 @@ func Sort(rdr io.Reader, wtr io.Writer, preprocess Processor, memMB int) error {
 	var rerr error
 	fileNames := make([]string, 0)
 	for rerr == nil {
-		var chunk [][]byte
-		chunk, rerr = readLines(brdr, memMB)
+		var chunk []LineDeco
+		chunk, rerr = readLines(brdr, memMB, preprocess)
 		if len(chunk) != 0 {
 			f, err := ioutil.TempFile("", fmt.Sprintf("gsort.%d.", len(fileNames)))
 			if err != nil {
@@ -89,7 +91,7 @@ func Sort(rdr io.Reader, wtr io.Writer, preprocess Processor, memMB int) error {
 			ch <- true
 			wg.Add(1)
 			// decorating and sorting is done in parallel.
-			go sortAndWrite(f, wg, chunk, preprocess, ch)
+			go sortAndWrite(f, wg, chunk, ch)
 		}
 	}
 	wg.Wait()
@@ -100,7 +102,7 @@ func Sort(rdr io.Reader, wtr io.Writer, preprocess Processor, memMB int) error {
 	return merge(fileNames, bwtr, preprocess)
 }
 
-func readLines(rdr *bufio.Reader, memMb int) ([][]byte, error) {
+func readLines(rdr *bufio.Reader, memMb int, process Processor) ([]LineDeco, error) {
 
 	start := time.Now()
 
@@ -128,7 +130,7 @@ func readLines(rdr *bufio.Reader, memMb int) ([][]byte, error) {
 	if n < 1 {
 		n = 1
 	}
-	processed := make([][]byte, n)
+	processed := make([]LineDeco, n)
 	var line []byte
 	var err error
 
@@ -144,10 +146,15 @@ func readLines(rdr *bufio.Reader, memMb int) ([][]byte, error) {
 		}
 		if len(line) == 0 {
 			if err == io.EOF {
+				last := processed[len(processed)-1]
+				if len(last.line) == 0 || last.line[len(last.line)-1] != '\n' {
+					processed[len(processed)-1].line = append(last.line, '\n')
+				}
 				return processed[:j], io.EOF
 			}
 		}
-		processed[j] = line
+		processed[j] = process(line)
+		processed[j].line = line
 
 		j += 1
 		if err == io.EOF {
@@ -244,7 +251,7 @@ func merge(fileNames []string, wtr io.Writer, process Processor) error {
 			next.i = c.i
 			heap.Push(&cache, next)
 		} else {
-			log.Println(fileNames[c.i], string(line))
+			os.Remove(fileNames[c.i])
 		}
 		wtr.Write(c.line)
 
@@ -252,36 +259,25 @@ func merge(fileNames []string, wtr io.Writer, process Processor) error {
 	return nil
 }
 
-func sortAndWrite(f *os.File, wg *sync.WaitGroup, chunk [][]byte, process Processor, ch chan bool) {
+func sortAndWrite(f *os.File, wg *sync.WaitGroup, chunk []LineDeco, ch chan bool) {
 	if len(chunk) == 0 {
 		return
-	}
-	last := chunk[len(chunk)-1]
-	if len(last) == 0 || last[len(last)-1] != '\n' {
-		chunk[len(chunk)-1] = append(last, '\n')
 	}
 	defer wg.Done()
 	gz := gzip.NewWriter(f)
 	defer f.Close()
 	defer gz.Close()
-	dchunk := make(Lines, len(chunk))
+
 	start := time.Now()
-
-	for i, l := range chunk {
-		dchunk[i] = process(l)
-		dchunk[i].line = l
-	}
-
-	procTime := time.Since(start).Seconds()
-	start = time.Now()
-
-	sort.Sort(dchunk)
+	L := Lines(chunk)
+	sort.Sort(&L)
 	sortTime := time.Since(start).Seconds()
-	log.Printf("time to process: %.3f, time to sort: %.3f", procTime, sortTime)
+	log.Printf("time to sort: %.3f", sortTime)
 	wtr := bufio.NewWriter(gz)
-	for _, dl := range dchunk {
+	for _, dl := range chunk {
 		wtr.Write(dl.line)
 	}
+	chunk = nil
 	wtr.Flush()
 	<-ch
 	log.Println("wrote:", f.Name())
