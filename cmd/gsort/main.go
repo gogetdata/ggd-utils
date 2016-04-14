@@ -72,12 +72,13 @@ func sortFnFromCols(cols []int, gf *ggd_utils.GenomeFile, getter *func(int, [][]
 				l.Cols[i] = (*getter)(l.Cols[i-1], toks)
 			} else {
 				if col == len(toks)-1 {
-					v, err := strconv.Atoi(unsafeString(toks[col]))
-					if err != nil {
-						log.Fatal(err)
-					}
-					l.Cols[i] = v
+					toks[col] = bytes.TrimRight(toks[col], "\r\n")
 				}
+				v, err := strconv.Atoi(unsafeString(toks[col]))
+				if err != nil {
+					log.Fatal(err)
+				}
+				l.Cols[i] = v
 			}
 		}
 		return l
@@ -113,7 +114,7 @@ func sniff(rdr *bufio.Reader) (string, *bufio.Reader, error) {
 							ok = false
 							break
 						}
-						v, err := strconv.Atoi(strings.TrimSuffix(toks[c], "\r\n"))
+						v, err := strconv.Atoi(strings.TrimRight(toks[c], "\r\n"))
 						if err != nil {
 							ok = false
 							break
@@ -131,7 +132,9 @@ func sniff(rdr *bufio.Reader) (string, *bufio.Reader, error) {
 					}
 				}
 				if ftype == "" {
-					return "", nil, fmt.Errorf("unknown file format")
+					return "", nil, fmt.Errorf("unknown file format: %s", string(line))
+				} else {
+					break
 				}
 			}
 			if err == io.EOF {
