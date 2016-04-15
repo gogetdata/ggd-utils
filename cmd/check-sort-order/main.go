@@ -10,8 +10,8 @@ import (
 	"strings"
 
 	"github.com/alexflint/go-arg"
-	"github.com/brentp/ggd-utils"
 	"github.com/brentp/xopen"
+	"github.com/gogetdata/ggd-utils"
 )
 
 var args struct {
