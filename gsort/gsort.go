@@ -2,19 +2,17 @@ package gsort
 
 import (
 	"bufio"
+	"fmt"
+	"io/ioutil"
 
 	gzip "github.com/klauspost/pgzip"
 
 	"container/heap"
-	"fmt"
 	"io"
-	"io/ioutil"
 	"log"
 	"os"
 	"runtime"
 	"sort"
-	"sync"
-	"time"
 )
 
 type LineDeco struct {
@@ -72,29 +70,13 @@ func Sort(rdr io.Reader, wtr io.Writer, preprocess Processor, memMB int) error {
 	if err != nil {
 		return err
 	}
-	// ch make sure we don't have too many processes running
-	ch := make(chan bool, runtime.GOMAXPROCS(-1))
-	// wg makes sure we wait until all is done
-	wg := &sync.WaitGroup{}
-	var rerr error
-	fileNames := make([]string, 0)
-	for rerr == nil {
-		var chunk []LineDeco
-		chunk, rerr = readLines(brdr, memMB, preprocess)
-		if len(chunk) != 0 {
-			f, err := ioutil.TempFile("", fmt.Sprintf("gsort.%d.", len(fileNames)))
-			if err != nil {
-				log.Fatal(err)
-			}
-			fileNames = append(fileNames, f.Name())
-			defer os.Remove(f.Name())
-			ch <- true
-			wg.Add(1)
-			// decorating and sorting is done in parallel.
-			go sortAndWrite(f, wg, chunk, ch)
-		}
+	ch := make(chan Lines, runtime.GOMAXPROCS(-1))
+	go readLines(ch, brdr, memMB, preprocess)
+	fileNames := writeChunks(ch, preprocess)
+	for _, f := range fileNames {
+		defer os.Remove(f)
 	}
-	wg.Wait()
+
 	if len(fileNames) == 1 {
 		return writeOne(fileNames[0], bwtr)
 	}
@@ -102,77 +84,45 @@ func Sort(rdr io.Reader, wtr io.Writer, preprocess Processor, memMB int) error {
 	return merge(fileNames, bwtr, preprocess)
 }
 
-func readLines(rdr *bufio.Reader, memMb int, process Processor) ([]LineDeco, error) {
+func readLines(ch chan Lines, rdr *bufio.Reader, memMb int, process Processor) {
 
-	start := time.Now()
+	mem := 1000000 * memMb / runtime.GOMAXPROCS(-1)
 
-	N := 2000
-	lens, j := make([]int, 0, N), 0
-
-	// sample XX lines to get the average length.
-	lines := make([][]byte, 0, N)
-	for len(lines) < cap(lines) {
-		line, err := rdr.ReadBytes('\n')
-		if err != nil && err != io.EOF {
-			return nil, err
-		}
-		if len(line) != 0 {
-			lens = append(lens, len(line))
-			lines = append(lines, line)
-		}
-		if err == io.EOF {
-			last := lines[len(lines)-1]
-			if last[len(last)-1] != '\n' {
-				lines[len(lines)-1] = append(last, '\n')
-			}
-			break
-		}
-	}
-	sort.Ints(lens)
-
-	n := 1000000 * memMb / lens[int(0.95*float64(len(lens)))] / runtime.GOMAXPROCS(-1)
-	if n < 1 {
-		n = 1
-	}
-	processed := make([]LineDeco, n)
+	processed := make(Lines, 0, 500)
 	var line []byte
 	var err error
 
+	sum := 0
+
 	for {
 
-		if j < len(lines) {
-			line = lines[j]
-		} else {
-			line, err = rdr.ReadBytes('\n')
-			if err != nil && err != io.EOF {
-				return nil, err
-			}
+		line, err = rdr.ReadBytes('\n')
+		if err != nil && err != io.EOF {
+			log.Fatal(err)
 		}
-		if len(line) == 0 {
-			if err == io.EOF {
-				last := processed[j].line
-				if len(last) == 0 || last[len(last)-1] != '\n' {
-					processed[j].line = append(last, '\n')
-				}
-				return processed[:j], io.EOF
-			}
-		}
-		processed[j] = LineDeco{line: line, Cols: process(line)}
 
-		j += 1
-		if err == io.EOF {
-			last := processed[j].line
-			if len(last) == 0 || last[len(last)-1] != '\n' {
-				processed[j].line = append(last, '\n')
-			}
-			return processed[:j], io.EOF
+		if len(line) > 0 {
+			processed = append(processed, LineDeco{line: line, Cols: process(line)})
+			sum += len(line)
 		}
-		if j == len(processed) {
+
+		if len(line) == 0 || err == io.EOF {
+			np := len(processed)
+			last := processed[np-1].line
+			if len(last) == 0 || last[len(last)-1] != '\n' {
+				processed[np-1].line = append(last, '\n')
+			}
+			ch <- processed
 			break
 		}
+
+		if sum >= mem {
+			ch <- processed
+			processed = make(Lines, 0, 500)
+			sum = 0
+		}
 	}
-	log.Printf("time to read: %d records: %.3f", len(processed), time.Since(start).Seconds())
-	return processed, nil
+	close(ch)
 }
 
 func writeHeader(wtr *bufio.Writer, rdr *bufio.Reader) error {
@@ -251,7 +201,7 @@ func merge(fileNames []string, wtr io.Writer, process Processor) error {
 			return err
 		}
 		if len(line) != 0 {
-			next := &LineDeco{line: line, Cols: process(line), i: c.i}
+			next := LineDeco{line: line, Cols: process(line), i: c.i}
 			heap.Push(&cache, next)
 		} else {
 			os.Remove(fileNames[c.i])
@@ -262,26 +212,24 @@ func merge(fileNames []string, wtr io.Writer, process Processor) error {
 	return nil
 }
 
-func sortAndWrite(f *os.File, wg *sync.WaitGroup, chunk []LineDeco, ch chan bool) {
-	if len(chunk) == 0 {
-		return
+func writeChunks(ch chan Lines, process Processor) (fileNames []string) {
+	fileNames = make([]string, 0, 20)
+	for chunk := range ch {
+		f, err := ioutil.TempFile("", fmt.Sprintf("gsort.%d.", len(fileNames)))
+		if err != nil {
+			log.Fatal(err)
+		}
+		gz := gzip.NewWriter(f)
+		L := Lines(chunk)
+		sort.Sort(&L)
+		wtr := bufio.NewWriter(gz)
+		for _, dl := range chunk {
+			wtr.Write(dl.line)
+		}
+		wtr.Flush()
+		gz.Close()
+		f.Close()
+		fileNames = append(fileNames, f.Name())
 	}
-	defer wg.Done()
-	gz := gzip.NewWriter(f)
-	defer f.Close()
-	defer gz.Close()
-
-	start := time.Now()
-	L := Lines(chunk)
-	sort.Sort(&L)
-	sortTime := time.Since(start).Seconds()
-	log.Printf("time to sort: %.3f", sortTime)
-	wtr := bufio.NewWriter(gz)
-	for _, dl := range chunk {
-		wtr.Write(dl.line)
-	}
-	chunk = nil
-	wtr.Flush()
-	<-ch
-	log.Println("wrote:", f.Name())
+	return fileNames
 }
