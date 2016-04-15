@@ -72,7 +72,9 @@ func Sort(rdr io.Reader, wtr io.Writer, preprocess Processor, memMB int) error {
 	}
 	ch := make(chan Lines, runtime.GOMAXPROCS(-1))
 	go readLines(ch, brdr, memMB)
-	fileNames := writeChunks(ch, preprocess)
+	fileNames := make([]string, 0, 20)
+	writeChunks(ch, preprocess, fileNames)
+
 	for _, f := range fileNames {
 		defer os.Remove(f)
 	}
@@ -211,8 +213,7 @@ func merge(fileNames []string, wtr io.Writer, process Processor) error {
 	return nil
 }
 
-func writeChunks(ch chan Lines, process Processor) (fileNames []string) {
-	fileNames = make([]string, 0, 20)
+func writeChunks(ch chan Lines, process Processor, fileNames []string) {
 	for chunk := range ch {
 		f, err := ioutil.TempFile("", fmt.Sprintf("gsort.%d.", len(fileNames)))
 		if err != nil {
@@ -234,5 +235,4 @@ func writeChunks(ch chan Lines, process Processor) (fileNames []string) {
 		f.Close()
 		fileNames = append(fileNames, f.Name())
 	}
-	return fileNames
 }
