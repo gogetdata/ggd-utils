@@ -5,6 +5,11 @@ import (
 	"compress/flate"
 	"fmt"
 	"io/ioutil"
+	"os/signal"
+	"path/filepath"
+	"runtime/pprof"
+	"syscall"
+	"time"
 
 	gzip "github.com/klauspost/compress/gzip"
 	//gzip "github.com/klauspost/pgzip"
@@ -65,6 +70,13 @@ type Processor func(line []byte) []int
 
 func Sort(rdr io.Reader, wtr io.Writer, preprocess Processor, memMB int) error {
 
+	f, perr := os.Create("gsort.pprof")
+	if perr != nil {
+		panic(perr)
+	}
+	pprof.StartCPUProfile(f)
+	defer pprof.StopCPUProfile()
+
 	brdr, bwtr := bufio.NewReader(rdr), bufio.NewWriter(wtr)
 	defer bwtr.Flush()
 
@@ -76,7 +88,6 @@ func Sort(rdr io.Reader, wtr io.Writer, preprocess Processor, memMB int) error {
 	go readLines(ch, brdr, memMB)
 	fileNames := writeChunks(ch, preprocess)
 
-	log.Println(fileNames)
 	for _, f := range fileNames {
 		defer os.Remove(f)
 	}
@@ -84,6 +95,7 @@ func Sort(rdr io.Reader, wtr io.Writer, preprocess Processor, memMB int) error {
 	if len(fileNames) == 1 {
 		return writeOne(fileNames[0], bwtr)
 	}
+	// TODO have special merge for when stuff is already mostly sorted. don't need pri queue.
 	return merge(fileNames, bwtr, preprocess)
 }
 
@@ -162,6 +174,9 @@ func writeOne(fname string, wtr io.Writer) error {
 }
 
 func merge(fileNames []string, wtr io.Writer, process Processor) error {
+
+	start := time.Now()
+
 	fhs := make([]*bufio.Reader, len(fileNames))
 
 	cache := make(Lines, len(fileNames))
@@ -172,6 +187,7 @@ func merge(fileNames []string, wtr io.Writer, process Processor) error {
 			return err
 		}
 		defer fh.Close()
+		//gz, err := newFastGzReader(fh)
 		gz, err := gzip.NewReader(fh)
 		if err != nil {
 			return err
@@ -212,28 +228,51 @@ func merge(fileNames []string, wtr io.Writer, process Processor) error {
 		wtr.Write(c.line)
 
 	}
+
+	log.Printf("time to merge: %.3f", time.Since(start).Seconds())
 	return nil
+}
+
+func init() {
+	// make sure we don't leave any temporary files.
+	c := make(chan os.Signal, 1)
+	pid := os.Getpid()
+	signal.Notify(c,
+		syscall.SIGINT,
+		syscall.SIGTERM,
+		syscall.SIGQUIT)
+	go func() {
+		<-c
+		matches, err := filepath.Glob(filepath.Join(os.TempDir(), fmt.Sprintf("gsort.%d.*", pid)))
+		if err != nil {
+			log.Fatal(err)
+		}
+		for _, m := range matches {
+			os.Remove(m)
+		}
+		os.Exit(3)
+	}()
+
 }
 
 func writeChunks(ch chan Lines, process Processor) []string {
 	fileNames := make([]string, 0, 20)
+	pid := os.Getpid()
 	for chunk := range ch {
-		f, err := ioutil.TempFile("", fmt.Sprintf("gsort.%d.", len(fileNames)))
+		f, err := ioutil.TempFile("", fmt.Sprintf("gsort.%d.%d.", pid, len(fileNames)))
 		if err != nil {
 			log.Fatal(err)
 		}
-		for _, c := range chunk {
-			c.Cols = process(c.line)
+		for i, c := range chunk {
+			chunk[i].Cols = process(c.line)
 		}
 
-		L := Lines(chunk)
-		sort.Sort(&L)
+		sort.Sort(&chunk)
 
 		gz, _ := gzip.NewWriterLevel(f, flate.BestSpeed)
-		wtr := bufio.NewWriter(gz)
+		wtr := bufio.NewWriterSize(gz, 65536)
 		for _, dl := range chunk {
 			wtr.Write(dl.line)
-			dl.Cols = nil
 		}
 		wtr.Flush()
 		gz.Close()
