@@ -22,53 +22,55 @@ import (
 	"sort"
 )
 
-type LineDeco struct {
-	i    int // used internally to indicate which file it came from.
-	line []byte
-	Cols []int
+type Chunk struct {
+	lines  [][]byte
+	idxs   []int // only for heap
+	lessFn func(a, b []byte) bool
 }
 
-type Lines []LineDeco
-
-func (l *Lines) Len() int {
-	return len(*l)
+func (c *Chunk) Len() int {
+	return len(c.lines)
 }
 
-func (l *Lines) Less(i, j int) bool {
+func (c *Chunk) Less(i, j int) bool {
+	return c.lessFn(c.lines[i], c.lines[j])
+}
 
-	for k := 0; k < len((*l)[i].Cols); k++ {
-		if (*l)[j].Cols[k] == (*l)[i].Cols[k] {
-			continue
-		}
-		return (*l)[i].Cols[k] < (*l)[j].Cols[k]
+func (c *Chunk) Swap(i, j int) {
+	if i < len(c.lines) {
+		(*c).lines[j], (*c).lines[i] = (*c).lines[i], (*c).lines[j]
 	}
-	return false
-}
-func (l *Lines) Swap(i, j int) {
-	if i < len(*l) {
-		(*l)[j], (*l)[i] = (*l)[i], (*l)[j]
+	if i < len(c.idxs) {
+		(*c).idxs[j], (*c).idxs[i] = (*c).idxs[i], (*c).idxs[j]
 	}
 }
 
 // for Heap
 
-func (l *Lines) Push(i interface{}) {
-	*l = append(*l, i.(LineDeco))
+type Pair struct {
+	line []byte
+	idx  int
 }
 
-func (l *Lines) Pop() interface{} {
-	n := len(*l)
+func (c *Chunk) Push(i interface{}) {
+	p := i.(Pair)
+	(*c).lines = append((*c).lines, p.line)
+	(*c).idxs = append((*c).idxs, p.idx)
+}
+
+func (c *Chunk) Pop() interface{} {
+	n := len(c.lines)
 	if n == 0 {
 		return nil
 	}
-	v := (*l)[n-1]
-	*l = (*l)[:n-1]
-	return v
+	line := (*c).lines[n-1]
+	(*c).lines = (*c).lines[:n-1]
+	idx := (*c).idxs[n-1]
+	(*c).idxs = (*c).idxs[:n-1]
+	return Pair{line, idx}
 }
 
-type Processor func(line []byte) []int
-
-func Sort(rdr io.Reader, wtr io.Writer, preprocess Processor, memMB int) error {
+func Sort(rdr io.Reader, wtr io.Writer, lessFn func(a, b []byte) bool, memMB int) error {
 
 	f, perr := os.Create("gsort.pprof")
 	if perr != nil {
@@ -84,9 +86,9 @@ func Sort(rdr io.Reader, wtr io.Writer, preprocess Processor, memMB int) error {
 	if err != nil {
 		return err
 	}
-	ch := make(chan Lines, runtime.GOMAXPROCS(-1))
+	ch := make(chan [][]byte, runtime.GOMAXPROCS(-1))
 	go readLines(ch, brdr, memMB)
-	fileNames := writeChunks(ch, preprocess)
+	fileNames := writeChunks(ch, lessFn)
 
 	for _, f := range fileNames {
 		defer os.Remove(f)
@@ -96,14 +98,14 @@ func Sort(rdr io.Reader, wtr io.Writer, preprocess Processor, memMB int) error {
 		return writeOne(fileNames[0], bwtr)
 	}
 	// TODO have special merge for when stuff is already mostly sorted. don't need pri queue.
-	return merge(fileNames, bwtr, preprocess)
+	return merge(fileNames, bwtr, lessFn)
 }
 
-func readLines(ch chan Lines, rdr *bufio.Reader, memMb int) {
+func readLines(ch chan [][]byte, rdr *bufio.Reader, memMb int) {
 
 	mem := 1000000 * memMb / runtime.GOMAXPROCS(-1)
 
-	processed := make(Lines, 0, 500)
+	lines := make([][]byte, 0, 500)
 	var line []byte
 	var err error
 
@@ -117,23 +119,23 @@ func readLines(ch chan Lines, rdr *bufio.Reader, memMb int) {
 		}
 
 		if len(line) > 0 {
-			processed = append(processed, LineDeco{line: line})
+			lines = append(lines, line)
 			sum += len(line)
 		}
 
 		if len(line) == 0 || err == io.EOF {
-			np := len(processed)
-			last := processed[np-1].line
+			np := len(lines)
+			last := lines[np-1]
 			if len(last) == 0 || last[len(last)-1] != '\n' {
-				processed[np-1].line = append(last, '\n')
+				lines[np-1] = append(last, '\n')
 			}
-			ch <- processed
+			ch <- lines
 			break
 		}
 
 		if sum >= mem {
-			ch <- processed
-			processed = make(Lines, 0, 500)
+			ch <- lines
+			lines = make([][]byte, 0, 500)
 			sum = 0
 		}
 	}
@@ -173,13 +175,15 @@ func writeOne(fname string, wtr io.Writer) error {
 	return err
 }
 
-func merge(fileNames []string, wtr io.Writer, process Processor) error {
+func merge(fileNames []string, wtr io.Writer, lessFn func(a, b []byte) bool) error {
 
 	start := time.Now()
 
 	fhs := make([]*bufio.Reader, len(fileNames))
 
-	cache := make(Lines, len(fileNames))
+	cache := Chunk{lines: make([][]byte, len(fileNames)),
+		lessFn: lessFn,
+		idxs:   make([]int, len(fileNames))}
 
 	for i, fn := range fileNames {
 		fh, err := os.Open(fn)
@@ -197,7 +201,8 @@ func merge(fileNames []string, wtr io.Writer, process Processor) error {
 
 		line, err := fhs[i].ReadBytes('\n')
 		if len(line) > 0 {
-			cache[i] = LineDeco{line: line, Cols: process(line), i: i}
+			cache.lines[i] = line
+			cache.idxs[i] = i
 		} else if err == io.EOF {
 			continue
 		} else if err != nil {
@@ -213,17 +218,17 @@ func merge(fileNames []string, wtr io.Writer, process Processor) error {
 		if o == nil {
 			break
 		}
-		c := o.(LineDeco)
+		c := o.(Pair)
 		// refill from same file
-		line, err := fhs[c.i].ReadBytes('\n')
+		line, err := fhs[c.idx].ReadBytes('\n')
 		if err != io.EOF && err != nil {
 			return err
 		}
 		if len(line) != 0 {
-			next := LineDeco{line: line, Cols: process(line), i: c.i}
+			next := Pair{line: line, idx: c.idx}
 			heap.Push(&cache, next)
 		} else {
-			os.Remove(fileNames[c.i])
+			os.Remove(fileNames[c.idx])
 		}
 		wtr.Write(c.line)
 
@@ -255,24 +260,21 @@ func init() {
 
 }
 
-func writeChunks(ch chan Lines, process Processor) []string {
+func writeChunks(ch chan [][]byte, cmp func(a, b []byte) bool) []string {
 	fileNames := make([]string, 0, 20)
 	pid := os.Getpid()
-	for chunk := range ch {
+	for lines := range ch {
 		f, err := ioutil.TempFile("", fmt.Sprintf("gsort.%d.%d.", pid, len(fileNames)))
 		if err != nil {
 			log.Fatal(err)
 		}
-		for i, c := range chunk {
-			chunk[i].Cols = process(c.line)
-		}
-
+		chunk := Chunk{lines: lines, lessFn: cmp}
 		sort.Sort(&chunk)
 
 		gz, _ := gzip.NewWriterLevel(f, flate.BestSpeed)
 		wtr := bufio.NewWriterSize(gz, 65536)
-		for _, dl := range chunk {
-			wtr.Write(dl.line)
+		for _, line := range chunk.lines {
+			wtr.Write(line)
 		}
 		wtr.Flush()
 		gz.Close()

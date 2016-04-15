@@ -38,50 +38,96 @@ func unsafeString(b []byte) string {
 	return *(*string)(unsafe.Pointer(&b))
 }
 
-// the last function is used when a column is -1
-func sortFnFromCols(cols []int, gf *ggd_utils.GenomeFile, getter *func(int, [][]byte) int) func([]byte) []int {
+func max(ints []int) int {
 	m := 0
-	for _, c := range cols {
+	for _, c := range ints {
 		if c > m {
 			m = c
 		}
 	}
-	m += 2
+	return m
+}
+
+type LesserFunc func(a, b []byte) bool
+
+// the last function is used when a column is -1
+func sortFnFromCols(cols []int, gf *ggd_utils.GenomeFile, getter *func(int, [][]byte) int) LesserFunc {
+	// cols are ordered indexes of chrom, start, end
+	m := 2 + max(cols)
 	if getter != nil && m < 6 {
 		m = 6
 	}
-	fn := func(line []byte) []int {
-		l := make([]int, len(cols))
+
+	type cache struct {
+		line []byte
+		toks [][]byte
+		vals []int
+	}
+
+	lastA := cache{vals: make([]int, len(cols))}
+	lastB := cache{vals: make([]int, len(cols))}
+	fn := func(a, b []byte) bool {
 		// handle chromosome column
-		toks := bytes.SplitN(line, []byte{'\t'}, m)
-		// TODO: only do this when needed.
-		// avoids problems with Atoi('222\n')
-		end := toks[len(toks)-1]
-		for end[len(end)-1] == '\n' || end[len(end)-1] == '\r' {
-			end = end[:len(end)-1]
+		var toksA, toksB [][]byte
+		if bytes.Equal(lastA.line, a) {
+			toksA = lastA.toks
+		} else {
+			toksA = bytes.SplitN(a, []byte{'\t'}, m)
+			lastA.toks = toksA
+			lastA.line = a
 		}
-		var ok bool
-		// TODO: use unsafe string
-		l[0], ok = gf.Order[string(toks[cols[0]])]
-		if !ok {
-			log.Fatalf("unknown chromosome: %s", toks[cols[0]])
+		if bytes.Equal(lastB.line, b) {
+			toksB = lastB.toks
+		} else {
+			toksB = bytes.SplitN(b, []byte{'\t'}, m)
+			lastB.toks = toksB
+			lastB.line = b
 		}
-		for k, col := range cols[1:] {
-			i := k + 1
-			if col == -1 {
-				l[i] = (*getter)(l[i-1], toks)
-			} else {
-				if col == len(toks)-1 {
-					toks[col] = bytes.TrimRight(toks[col], "\r\n")
-				}
-				v, err := strconv.Atoi(unsafeString(toks[col]))
-				if err != nil {
-					log.Fatal(err)
-				}
-				l[i] = v
+
+		if !bytes.Equal(toksA[cols[0]], toksB[cols[0]]) {
+
+			aChrom, ok := gf.Order[unsafeString(toksA[cols[0]])]
+			if !ok {
+				log.Fatalf("unknown chromosome: %s", toksA[cols[0]])
+			}
+			bChrom, ok := gf.Order[unsafeString(toksB[cols[0]])]
+			if !ok {
+				log.Fatalf("unknown chromosome: %s", toksB[cols[0]])
+			}
+			if aChrom != bChrom {
+				return aChrom < bChrom
 			}
 		}
-		return l
+
+		aStart, err := strconv.Atoi(unsafeString(toksA[cols[1]]))
+		if err != nil {
+			log.Fatal(err)
+		}
+		bStart, err := strconv.Atoi(unsafeString(toksB[cols[1]]))
+		if err != nil {
+			log.Fatal(err)
+		}
+		if aStart != bStart {
+			return aStart < bStart
+		}
+
+		eCol := cols[2]
+		var aEnd, bEnd int
+		if eCol == -1 {
+			aEnd = (*getter)(aStart, toksA)
+			bEnd = (*getter)(bStart, toksB)
+		} else {
+			var err error
+			aEnd, err = strconv.Atoi(unsafeString(toksA[eCol]))
+			if err != nil {
+				log.Fatal(err)
+			}
+			bEnd, err = strconv.Atoi(unsafeString(toksB[eCol]))
+			if err != nil {
+				log.Fatal(err)
+			}
+		}
+		return aEnd <= bEnd
 	}
 	return fn
 }
