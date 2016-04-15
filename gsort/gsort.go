@@ -71,7 +71,7 @@ func Sort(rdr io.Reader, wtr io.Writer, preprocess Processor, memMB int) error {
 		return err
 	}
 	ch := make(chan Lines, runtime.GOMAXPROCS(-1))
-	go readLines(ch, brdr, memMB, preprocess)
+	go readLines(ch, brdr, memMB)
 	fileNames := writeChunks(ch, preprocess)
 	for _, f := range fileNames {
 		defer os.Remove(f)
@@ -80,11 +80,10 @@ func Sort(rdr io.Reader, wtr io.Writer, preprocess Processor, memMB int) error {
 	if len(fileNames) == 1 {
 		return writeOne(fileNames[0], bwtr)
 	}
-	// currently merging is serial. Should parallelize.
 	return merge(fileNames, bwtr, preprocess)
 }
 
-func readLines(ch chan Lines, rdr *bufio.Reader, memMb int, process Processor) {
+func readLines(ch chan Lines, rdr *bufio.Reader, memMb int) {
 
 	mem := 1000000 * memMb / runtime.GOMAXPROCS(-1)
 
@@ -102,7 +101,7 @@ func readLines(ch chan Lines, rdr *bufio.Reader, memMb int, process Processor) {
 		}
 
 		if len(line) > 0 {
-			processed = append(processed, LineDeco{line: line, Cols: process(line)})
+			processed = append(processed, LineDeco{line: line})
 			sum += len(line)
 		}
 
@@ -220,6 +219,10 @@ func writeChunks(ch chan Lines, process Processor) (fileNames []string) {
 			log.Fatal(err)
 		}
 		gz := gzip.NewWriter(f)
+		for _, c := range chunk {
+			c.Cols = process(c.line)
+		}
+
 		L := Lines(chunk)
 		sort.Sort(&L)
 		wtr := bufio.NewWriter(gz)
