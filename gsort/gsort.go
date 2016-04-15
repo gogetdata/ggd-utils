@@ -2,10 +2,12 @@ package gsort
 
 import (
 	"bufio"
+	"compress/flate"
 	"fmt"
 	"io/ioutil"
 
-	gzip "github.com/klauspost/pgzip"
+	gzip "github.com/klauspost/compress/gzip"
+	//gzip "github.com/klauspost/pgzip"
 
 	"container/heap"
 	"io"
@@ -72,9 +74,9 @@ func Sort(rdr io.Reader, wtr io.Writer, preprocess Processor, memMB int) error {
 	}
 	ch := make(chan Lines, runtime.GOMAXPROCS(-1))
 	go readLines(ch, brdr, memMB)
-	fileNames := make([]string, 0, 20)
-	writeChunks(ch, preprocess, fileNames)
+	fileNames := writeChunks(ch, preprocess)
 
+	log.Println(fileNames)
 	for _, f := range fileNames {
 		defer os.Remove(f)
 	}
@@ -213,26 +215,30 @@ func merge(fileNames []string, wtr io.Writer, process Processor) error {
 	return nil
 }
 
-func writeChunks(ch chan Lines, process Processor, fileNames []string) {
+func writeChunks(ch chan Lines, process Processor) []string {
+	fileNames := make([]string, 0, 20)
 	for chunk := range ch {
 		f, err := ioutil.TempFile("", fmt.Sprintf("gsort.%d.", len(fileNames)))
 		if err != nil {
 			log.Fatal(err)
 		}
-		gz := gzip.NewWriter(f)
 		for _, c := range chunk {
 			c.Cols = process(c.line)
 		}
 
 		L := Lines(chunk)
 		sort.Sort(&L)
+
+		gz, _ := gzip.NewWriterLevel(f, flate.BestSpeed)
 		wtr := bufio.NewWriter(gz)
 		for _, dl := range chunk {
 			wtr.Write(dl.line)
+			dl.Cols = nil
 		}
 		wtr.Flush()
 		gz.Close()
 		f.Close()
 		fileNames = append(fileNames, f.Name())
 	}
+	return fileNames
 }
