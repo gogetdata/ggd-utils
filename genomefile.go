@@ -10,6 +10,7 @@ import (
 	"github.com/brentp/xopen"
 )
 
+// GenomeFile has the Lengths and Orders of the chromosomes.
 type GenomeFile struct {
 	Lengths map[string]int
 	Order   map[string]int
@@ -21,6 +22,7 @@ func (g *GenomeFile) Less(a, b string) bool {
 	return g.Order[a] <= g.Order[b]
 }
 
+// ReadGenomeFile returns a GenomeFile struct
 func ReadGenomeFile(path string) (*GenomeFile, error) {
 
 	rdr, err := xopen.Ropen(path)
