@@ -3,6 +3,7 @@ package ggd_utils
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"regexp"
 	"strconv"
@@ -33,6 +34,8 @@ func ReadGenomeFile(path string) (*GenomeFile, error) {
 	defer rdr.Close()
 
 	space := regexp.MustCompile("\\s+")
+	// allow us to bypass a header. found indicates when we have a usable line.
+	found := false
 
 	for {
 		line, err := rdr.ReadBytes('\n')
@@ -56,11 +59,18 @@ func ReadGenomeFile(path string) (*GenomeFile, error) {
 		chrom := toks[0]
 		length, err := strconv.Atoi(toks[1])
 		if err != nil {
+			if !found {
+				continue
+			}
 			return nil, err
 		}
+		found = true
 		gf.Lengths[chrom] = length
 		gf.Order[chrom] = len(gf.Order)
 
+	}
+	if !found {
+		return nil, fmt.Errorf("no usable lengths found for %s\n", path)
 	}
 	return gf, nil
 }
