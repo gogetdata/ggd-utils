@@ -68,7 +68,7 @@ func checkLine(iline int, line []byte, lastChrom []byte, lastStart int,
 	if !bytes.Equal(chrom, lastChrom) {
 		if len(lastChrom) != 0 {
 			if !cmp(string(lastChrom), string(chrom)) {
-				return chrom, start, fmt.Errorf("chromosomes not in specified sort order: %s, %s at line %d\n", lastChrom, chrom, iline)
+				return chrom, start, fmt.Errorf("chromosomes not in specified sort order: %s, %s at line %d\nuse gsort (https://github.com/brentp/gsort/) to order according to the genome file", lastChrom, chrom, iline)
 			}
 		}
 		lastChrom = chrom
