@@ -21,7 +21,7 @@ var lineTests = []struct {
 	line      []byte
 	lastChrom []byte
 	lastPos   int
-	getter    chromStartFunc
+	getter    chromStartGetter
 	cmp       func(a, b string) bool
 	expChrom  []byte
 	expStart  int
@@ -30,6 +30,10 @@ var lineTests = []struct {
 	{1, []byte("1\t23\tasdf\tvvv"), []byte("1"), 22, get_vcf_chrom_start, less, []byte("1"), 23, false},
 	{1, []byte("1\t23\tasdf\tvvv"), []byte("11"), 22, get_vcf_chrom_start, less, []byte("1"), 23, true},
 	{1, []byte("1\t23\tasdf\tvvv"), []byte("1"), 24, get_vcf_chrom_start, less, []byte("1"), 23, true},
+
+	{1, []byte("1\t23\tasdf\tvvv"), []byte("1"), 24, get_gff_chrom_start, less, []byte("1"), 0, true},
+
+	{1, []byte("1111\tex\tmRNA\t1235"), []byte("1"), 24, get_gff_chrom_start, less, []byte("1111"), 1235, false},
 }
 
 func (s *MTest) TestCases(c *C) {

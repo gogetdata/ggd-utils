@@ -27,13 +27,19 @@ func check(err error) {
 
 var VCFCommentAfterHeader = errors.New("comment line after non-header #CHROM line in VCF")
 
-type chromStartFunc func(line []byte) (chrom []byte, end int, err error)
+type chromStartGetter func([]byte) ([]byte, int, error)
 
-var get_vcf_chrom_start chromStartFunc = func(line []byte) ([]byte, int, error) {
+var get_vcf_chrom_start chromStartGetter = func(line []byte) ([]byte, int, error) {
 	cpr := bytes.SplitN(line, []byte{'\t'}, 3)
 	chrom := cpr[0]
 	pos, err := strconv.Atoi(string(cpr[1]))
 	return chrom, pos, err
+}
+
+var get_gff_chrom_start chromStartGetter = func(line []byte) ([]byte, int, error) {
+	toks := bytes.SplitN(line, []byte{'\t'}, 4)
+	start, err := strconv.Atoi(string(toks[3]))
+	return toks[0], start, err
 }
 
 func main() {
@@ -50,10 +56,19 @@ func main() {
 	if strings.HasSuffix(args.Path, ".vcf.gz") {
 		checkVCF(args.Path, gf)
 	} else if strings.HasSuffix(args.Path, ".bed.gz") {
-		checkBED(args.Path, gf)
-
+		checkTab(args.Path, gf, get_vcf_chrom_start)
 	} else {
-		log.Fatalf("Don't know how to check this type of file: %s\n", args.Path)
+		found := false
+		for _, suff := range []string{"gff", "gtf", "gff3", "gff2"} {
+			if strings.HasSuffix(args.Path, suff) || strings.HasSuffix(args.Path, suff+".gz") {
+				found = true
+				checkTab(args.Path, gf, get_gff_chrom_start)
+				break
+			}
+		}
+		if !found {
+			log.Fatalf("Don't know how to check this type of file: %s\n", args.Path)
+		}
 	}
 }
 
@@ -86,7 +101,7 @@ func checkLine(iline int, line []byte, lastChrom []byte, lastStart int,
 	return chrom, start, nil
 }
 
-func checkBED(path string, gf *ggd_utils.GenomeFile) {
+func checkTab(path string, gf *ggd_utils.GenomeFile, getter chromStartGetter) {
 	if !xopen.Exists(path + ".tbi") {
 		log.Fatalf("BED: %s should have a .tbi", path)
 	}
@@ -101,14 +116,16 @@ func checkBED(path string, gf *ggd_utils.GenomeFile) {
 		if err == io.EOF {
 			break
 		}
-		// TODO handle track lines?
-		if line[0] == '#' {
+		if len(line) == 0 {
+			continue
+		}
+		if line[0] == '#' || bytes.HasPrefix(line, []byte("track")) || bytes.HasPrefix(line, []byte("browser")) {
 			if afterHeader {
-				log.Fatalf("found comment line after header at line: %d", iline)
+				log.Fatalf("found comment/header line after header at line: %d", iline)
 			}
 		} else {
 			afterHeader = true
-			lastChrom, lastPos, err = checkLine(iline, line, lastChrom, lastPos, get_vcf_chrom_start, gf.Less)
+			lastChrom, lastPos, err = checkLine(iline, line, lastChrom, lastPos, getter, gf.Less)
 			if err != nil {
 				log.Fatal(err)
 			}

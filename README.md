@@ -20,9 +20,7 @@ the sort order and presence or absence of the 'chr' prefix for chromosomes.
 
 for arch in 386 amd64; do
     for os in darwin linux; do
-		rm -rf $os/$arch/
-		mkdir -p $os/$arch/
-        GOOS=$os GOARCH=$arch go build -o ${os}/${arch}/check-sort-order cmd/check-sort-order/main.go
+        GOOS=$os GOARCH=$arch go build -o check-sort-order-${os}_${arch} cmd/check-sort-order/main.go
     done
 done
 
