@@ -33,7 +33,7 @@ var lineTests = []struct {
 
 	{1, []byte("1\t23\tasdf\tvvv"), []byte("1"), 24, get_gff_chrom_start, less, []byte("1"), 0, true},
 
-	{1, []byte("1111\tex\tmRNA\t1235"), []byte("1"), 24, get_gff_chrom_start, less, []byte("1111"), 1235, false},
+	{1, []byte("1111\tex\tmRNA\t1235\t1236"), []byte("1"), 24, get_gff_chrom_start, less, []byte("1111"), 1235, false},
 }
 
 func (s *MTest) TestCases(c *C) {

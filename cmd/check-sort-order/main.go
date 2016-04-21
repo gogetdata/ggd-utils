@@ -37,7 +37,7 @@ var get_vcf_chrom_start chromStartGetter = func(line []byte) ([]byte, int, error
 }
 
 var get_gff_chrom_start chromStartGetter = func(line []byte) ([]byte, int, error) {
-	toks := bytes.SplitN(line, []byte{'\t'}, 4)
+	toks := bytes.SplitN(line, []byte{'\t'}, 5)
 	start, err := strconv.Atoi(string(toks[3]))
 	return toks[0], start, err
 }
