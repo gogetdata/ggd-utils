@@ -1,5 +1,7 @@
 # ggd-utils
 
+[![Build Status](https://travis-ci.org/gogetdata/ggd-utils.svg?branch=master)](https://travis-ci.org/gogetdata/ggd-utils)
+
 cmd/check-sort-order/ takes a genome file and (currently) a .vcf.gz or a .bed.gz and
 
 checks that:
