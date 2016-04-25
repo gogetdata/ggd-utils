@@ -1,0 +1,14 @@
+language: go
+
+os:
+  - linux
+  - osx
+
+go:
+  - 1.5
+  - 1.6
+
+script:
+    - cd cmd/check-sort-order
+    - go test
+
