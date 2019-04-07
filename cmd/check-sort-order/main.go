@@ -102,7 +102,7 @@ func checkLine(iline int, line []byte, lastChrom []byte, lastStart int,
 }
 
 func checkTab(path string, gf *ggd_utils.GenomeFile, getter chromStartGetter) {
-	if !xopen.Exists(path + ".tbi") {
+	if !(xopen.Exists(path+".tbi") || xopen.Exists(path+".csi")) {
 		log.Fatalf("BED: %s should have a .tbi", path)
 	}
 	rdr, err := xopen.Ropen(path)
@@ -138,8 +138,8 @@ func checkTab(path string, gf *ggd_utils.GenomeFile, getter chromStartGetter) {
 }
 
 func checkVCF(path string, gf *ggd_utils.GenomeFile) {
-	if !xopen.Exists(path + ".tbi") {
-		log.Fatal("VCF should have a .tbi")
+	if !(xopen.Exists(path+".tbi") || xopen.Exists(path+".csi")) {
+		log.Fatal("VCF should have a .tbi or .csi")
 	}
 
 	rdr, err := xopen.Ropen(path)

@@ -5,8 +5,10 @@ os:
   - osx
 
 go:
-  - 1.5
-  - 1.6
+  - 1.9.x
+  - 1.10.x
+  - 1.11.x
+  - 1.12.x
 
 script:
     - cd cmd/check-sort-order
