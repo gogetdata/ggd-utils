@@ -1,15 +1,18 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
 	"errors"
 	"fmt"
 	"io"
 	"log"
+	"os"
 	"strconv"
 	"strings"
 
 	"github.com/alexflint/go-arg"
+	"github.com/biogo/hts/bgzf"
 	"github.com/brentp/xopen"
 	"github.com/gogetdata/ggd-utils"
 )
@@ -105,7 +108,19 @@ func checkTab(path string, gf *ggd_utils.GenomeFile, getter chromStartGetter) {
 	if !(xopen.Exists(path+".tbi") || xopen.Exists(path+".csi")) {
 		log.Fatalf("BED: %s should have a .tbi", path)
 	}
-	rdr, err := xopen.Ropen(path)
+	fh, err := os.Open(path)
+	if err != nil {
+		log.Fatalf("BED: unable to open file: %s", path)
+	}
+	if ok, _ := bgzf.HasEOF(fh); !ok {
+		log.Fatal("missing EOF")
+	}
+
+	bgz, err := bgzf.NewReader(fh, 1)
+	defer bgz.Close()
+	defer fh.Close()
+
+	rdr := bufio.NewReader(bgz)
 	iline := 1
 	check(err)
 	afterHeader := false
@@ -142,8 +157,18 @@ func checkVCF(path string, gf *ggd_utils.GenomeFile) {
 		log.Fatal("VCF should have a .tbi or .csi")
 	}
 
-	rdr, err := xopen.Ropen(path)
+	fh, err := os.Open(path)
 	check(err)
+	defer fh.Close()
+	if ok, _ := bgzf.HasEOF(fh); !ok {
+		log.Fatalf("missing EOF in %s", path)
+	}
+
+	bgz, err := bgzf.NewReader(fh, 1)
+	check(err)
+	defer bgz.Close()
+	rdr := bufio.NewReader(bgz)
+
 	afterHeader := false
 	iline := 1
 	lastChrom := []byte("")
