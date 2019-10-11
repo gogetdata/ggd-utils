@@ -5,8 +5,10 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"log"
 	"regexp"
 	"strconv"
+	"strings"
 
 	"github.com/brentp/xopen"
 )
@@ -16,6 +18,7 @@ type GenomeFile struct {
 	Lengths map[string]int
 	Order   map[string]int
 	path    string
+	ReMap   map[string]string
 }
 
 // Less checks if one chromosome occurs before the other.
@@ -23,8 +26,34 @@ func (g *GenomeFile) Less(a, b string) bool {
 	return g.Order[a] <= g.Order[b]
 }
 
+func readChromosomMappings(fname string) map[string]string {
+	if fname == "" {
+		return nil
+	}
+	rdr, err := xopen.Ropen(fname)
+	result := make(map[string]string)
+	if err != nil {
+		log.Fatalf("[gsort] unable to open chromosome maping file: %s", fname)
+	}
+
+	for {
+		line, err := rdr.ReadString('\n')
+		if len(line) > 0 {
+			toks := strings.Split(strings.TrimSpace(line), "\t")
+			result[toks[0]] = toks[1]
+		}
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			log.Printf("[gsort] error reading chromosome maping file: %s. %s", fname, err)
+		}
+	}
+	return result
+}
+
 // ReadGenomeFile returns a GenomeFile struct
-func ReadGenomeFile(path string) (*GenomeFile, error) {
+func ReadGenomeFile(path string, chromsomeMappings string) (*GenomeFile, error) {
 
 	rdr, err := xopen.Ropen(path)
 	if err != nil {
@@ -32,6 +61,7 @@ func ReadGenomeFile(path string) (*GenomeFile, error) {
 	}
 	gf := &GenomeFile{path: path, Lengths: make(map[string]int, 50), Order: make(map[string]int, 50)}
 	defer rdr.Close()
+	gf.ReMap = readChromosomMappings(chromsomeMappings)
 
 	space := regexp.MustCompile("\\s+")
 	// allow us to bypass a header. found indicates when we have a usable line.
