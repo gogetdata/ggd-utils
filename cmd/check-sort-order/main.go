@@ -14,7 +14,7 @@ import (
 	"github.com/alexflint/go-arg"
 	"github.com/biogo/hts/bgzf"
 	"github.com/brentp/xopen"
-	"github.com/gogetdata/ggd-utils"
+	ggd_utils "github.com/gogetdata/ggd-utils"
 )
 
 var args struct {
@@ -51,7 +51,7 @@ func main() {
 	if args.Path == "" || args.Genome == "" {
 		p.Fail("must specify a path to check and a genome file")
 	}
-	gf, err := ggd_utils.ReadGenomeFile(args.Genome)
+	gf, err := ggd_utils.ReadGenomeFile(args.Genome, "")
 	if err != nil {
 		log.Fatal(err)
 	}
