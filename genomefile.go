@@ -36,10 +36,18 @@ func readChromosomMappings(fname string) map[string]string {
 		log.Fatalf("[gsort] unable to open chromosome maping file: %s", fname)
 	}
 
+	warned := false
 	for {
 		line, err := rdr.ReadString('\n')
 		if len(line) > 0 {
 			toks := strings.Split(strings.TrimSpace(line), "\t")
+			if len(toks) == 1 {
+				toks = append(toks, "[unknown]"+toks[0])
+				if !warned {
+					log.Printf("[gsort] warning unmappable chromosome: %s.", toks[0])
+					warned = true
+				}
+			}
 			result[toks[0]] = toks[1]
 		}
 		if err == io.EOF {
