@@ -58,7 +58,7 @@ func main() {
 
 	if strings.HasSuffix(args.Path, ".vcf.gz") {
 		checkVCF(args.Path, gf)
-	} else if strings.HasSuffix(args.Path, ".bed.gz") {
+	} else if strings.HasSuffix(args.Path, ".bed.gz") || strings.HasSuffix(args.Path, ".bedGraph.gz") {
 		checkTab(args.Path, gf, get_vcf_chrom_start)
 	} else {
 		found := false
