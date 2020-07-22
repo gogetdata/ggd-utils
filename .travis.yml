@@ -11,6 +11,7 @@ go:
   - 1.12.x
 
 script:
+    - ./functional-test.sh
     - cd cmd/check-sort-order
     - go test
 
